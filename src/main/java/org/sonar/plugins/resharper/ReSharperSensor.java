@@ -23,17 +23,15 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.sonar.api.batch.Sensor;
-import org.sonar.api.batch.SensorContext;
-import org.sonar.api.component.ResourcePerspectives;
+import org.sonar.api.batch.fs.FileSystem;
+import org.sonar.api.batch.fs.InputFile;
+import org.sonar.api.batch.rule.ActiveRule;
+import org.sonar.api.batch.rule.ActiveRules;
+import org.sonar.api.batch.sensor.Sensor;
+import org.sonar.api.batch.sensor.SensorContext;
+import org.sonar.api.batch.sensor.SensorDescriptor;
 import org.sonar.api.config.Settings;
-import org.sonar.api.issue.Issuable;
-import org.sonar.api.profiles.RulesProfile;
-import org.sonar.api.resources.Project;
 import org.sonar.api.rule.RuleKey;
-import org.sonar.api.rules.ActiveRule;
-import org.sonar.api.scan.filesystem.FileQuery;
-import org.sonar.api.scan.filesystem.ModuleFileSystem;
 
 import java.io.File;
 import java.util.List;
@@ -43,81 +41,63 @@ public class ReSharperSensor implements Sensor {
   private static final Logger LOG = LoggerFactory.getLogger(ReSharperSensor.class);
 
   private final ReSharperConfiguration reSharperConf;
-  private final Settings settings;
-  private final RulesProfile profile;
-  private final ModuleFileSystem fileSystem;
-  private final ResourcePerspectives perspectives;
 
-  public ReSharperSensor(ReSharperConfiguration reSharperConf, Settings settings, RulesProfile profile, ModuleFileSystem fileSystem, ResourcePerspectives perspectives) {
+  public ReSharperSensor(ReSharperConfiguration reSharperConf) {
     this.reSharperConf = reSharperConf;
-    this.settings = settings;
-    this.profile = profile;
-    this.fileSystem = fileSystem;
-    this.perspectives = perspectives;
   }
 
   @Override
-  public boolean shouldExecuteOnProject(Project project) {
-    boolean shouldExecute;
-
-    if (!hasFilesToAnalyze()) {
-      shouldExecute = false;
-    } else if (profile.getActiveRulesByRepository(reSharperConf.repositoryKey()).isEmpty()) {
-      LOG.info("All ReSharper rules are disabled, skipping its execution.");
-      shouldExecute = false;
-    } else {
-      shouldExecute = true;
-    }
-
-    return shouldExecute;
-  }
-
-  private boolean hasFilesToAnalyze() {
-    return !fileSystem.files(FileQuery.onSource().onLanguage(reSharperConf.languageKey())).isEmpty();
+  public void describe(SensorDescriptor descriptor) {
+    descriptor
+      .name("ReSharper")
+      .workOnLanguages(reSharperConf.languageKey())
+      .workOnFileTypes(InputFile.Type.MAIN)
+      // TODO Lost ability to log messages to inform that ReSharper rules should be enabled
+      .createIssuesForRuleRepositories(reSharperConf.repositoryKey());
   }
 
   @Override
-  public void analyse(Project project, SensorContext context) {
-    analyse(context, new FileProvider(project, context), new ReSharperDotSettingsWriter(), new ReSharperReportParser(), new ReSharperExecutor());
+  public void execute(SensorContext context) {
+    execute(context, new ReSharperDotSettingsWriter(), new ReSharperReportParser(), new ReSharperExecutor());
   }
 
   @VisibleForTesting
-  void analyse(SensorContext context, FileProvider fileProvider, ReSharperDotSettingsWriter writer, ReSharperReportParser parser, ReSharperExecutor executor) {
+  void execute(SensorContext context, ReSharperDotSettingsWriter writer, ReSharperReportParser parser, ReSharperExecutor executor) {
+    Settings settings = context.settings();
+
     checkProperties(settings);
 
-    File rulesetFile = new File(fileSystem.workingDir(), "resharper-sonarqube.DotSettings");
-    writer.write(enabledRuleKeys(), rulesetFile);
+    File rulesetFile = new File(context.fileSystem().workDir(), "resharper-sonarqube.DotSettings");
+    writer.write(enabledRuleKeys(context.activeRules()), rulesetFile);
 
-    File reportFile = new File(fileSystem.workingDir(), "resharper-report.xml");
+    File reportFile = new File(context.fileSystem().workDir(), "resharper-report.xml");
 
     executor.execute(
       settings.getString(ReSharperPlugin.INSPECTCODE_PATH_PROPERTY_KEY), settings.getString(ReSharperPlugin.PROJECT_NAME_PROPERTY_KEY),
       settings.getString(ReSharperPlugin.SOLUTION_FILE_PROPERTY_KEY), rulesetFile, reportFile, settings.getInt(ReSharperPlugin.TIMEOUT_MINUTES_PROPERTY_KEY));
 
-    File solutionFile = new File(settings.getString(ReSharperPlugin.SOLUTION_FILE_PROPERTY_KEY));
+    FileSystem fs = context.fileSystem();
+    new File(settings.getString(ReSharperPlugin.SOLUTION_FILE_PROPERTY_KEY));
     for (ReSharperIssue issue : parser.parse(reportFile)) {
       if (!hasFileAndLine(issue)) {
         logSkippedIssue(issue, "which has no associated file.");
         continue;
       }
 
-      File file = fileProvider.fileInSolution(solutionFile, issue.filePath());
-      org.sonar.api.resources.File sonarFile = fileProvider.fromIOFile(file);
+      // TODO FileSystem.files() is found before FileSystem.inputFile()
+      InputFile sonarFile = fs.inputFile(fs.predicates().hasAbsolutePath(issue.filePath()));
       if (sonarFile == null) {
-        logSkippedIssueOutsideOfSonarQube(issue, file);
-      } else if (reSharperConf.languageKey().equals(sonarFile.getLanguage().getKey())) {
-        Issuable issuable = perspectives.as(Issuable.class, sonarFile);
-        if (issuable == null) {
-          logSkippedIssueOutsideOfSonarQube(issue, file);
-        } else if (!enabledRuleKeys().contains(issue.ruleKey())) {
+        logSkippedIssueOutsideOfSonarQube(issue);
+      } else if (reSharperConf.languageKey().equals(sonarFile.language())) {
+        if (!enabledRuleKeys(context.activeRules()).contains(issue.ruleKey())) {
           logSkippedIssue(issue, "because the rule \"" + issue.ruleKey() + "\" is either missing or inactive in the quality profile.");
         } else {
-          issuable.addIssue(
-            issuable.newIssueBuilder()
-              .ruleKey(RuleKey.of(reSharperConf.repositoryKey(), issue.ruleKey()))
-              .line(issue.line())
-              .message(issue.message())
-              .build());
+          context.addIssue(context.issueBuilder()
+            .ruleKey(RuleKey.of(reSharperConf.repositoryKey(), issue.ruleKey()))
+            .onFile(sonarFile)
+            .atLine(issue.line())
+            .message(issue.message())
+            .build());
         }
       }
     }
@@ -127,18 +107,19 @@ public class ReSharperSensor implements Sensor {
     return issue.filePath() != null && issue.line() != null;
   }
 
-  private static void logSkippedIssueOutsideOfSonarQube(ReSharperIssue issue, File file) {
-    logSkippedIssue(issue, "whose file \"" + file.getAbsolutePath() + "\" is not in SonarQube.");
+  private static void logSkippedIssueOutsideOfSonarQube(ReSharperIssue issue) {
+    logSkippedIssue(issue, "whose file \"" + issue.filePath() + "\" is not in SonarQube.");
   }
 
   private static void logSkippedIssue(ReSharperIssue issue, String reason) {
     LOG.info("Skipping the ReSharper issue at line " + issue.reportLine() + " " + reason);
   }
 
-  private List<String> enabledRuleKeys() {
+  private List<String> enabledRuleKeys(ActiveRules activeRules) {
     ImmutableList.Builder<String> builder = ImmutableList.builder();
-    for (ActiveRule activeRule : profile.getActiveRulesByRepository(reSharperConf.repositoryKey())) {
-      builder.add(activeRule.getRuleKey());
+    for (ActiveRule activeRule : activeRules.findByRepository(reSharperConf.repositoryKey())) {
+      // TODO WTF? ActiveRule.ruleKey() should be a string, and perhaps there should be a method ActiveRule.rule()
+      builder.add(activeRule.ruleKey().rule());
     }
     return builder.build();
   }
@@ -153,4 +134,5 @@ public class ReSharperSensor implements Sensor {
       throw new IllegalStateException("The property \"" + property + "\" must be set.");
     }
   }
+
 }

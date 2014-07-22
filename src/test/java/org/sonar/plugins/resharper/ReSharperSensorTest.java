@@ -20,30 +20,29 @@
 package org.sonar.plugins.resharper;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Maps;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
-import org.sonar.api.batch.SensorContext;
-import org.sonar.api.component.ResourcePerspectives;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
+import org.sonar.api.batch.fs.InputFile;
+import org.sonar.api.batch.fs.internal.DefaultFileSystem;
+import org.sonar.api.batch.fs.internal.DefaultInputFile;
+import org.sonar.api.batch.rule.ActiveRule;
+import org.sonar.api.batch.rule.ActiveRules;
+import org.sonar.api.batch.sensor.SensorContext;
+import org.sonar.api.batch.sensor.internal.DefaultSensorDescriptor;
+import org.sonar.api.batch.sensor.issue.Issue;
+import org.sonar.api.batch.sensor.issue.IssueBuilder;
+import org.sonar.api.batch.sensor.issue.internal.DefaultIssueBuilder;
 import org.sonar.api.config.Settings;
-import org.sonar.api.issue.Issuable;
-import org.sonar.api.issue.Issuable.IssueBuilder;
-import org.sonar.api.issue.Issue;
-import org.sonar.api.profiles.RulesProfile;
-import org.sonar.api.resources.Language;
-import org.sonar.api.resources.Project;
 import org.sonar.api.rule.RuleKey;
-import org.sonar.api.rules.ActiveRule;
-import org.sonar.api.scan.filesystem.FileQuery;
-import org.sonar.api.scan.filesystem.ModuleFileSystem;
 
 import javax.annotation.Nullable;
 
 import java.io.File;
-import java.util.List;
-import java.util.Map;
 
 import static org.fest.assertions.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -56,82 +55,47 @@ public class ReSharperSensorTest {
   public ExpectedException thrown = ExpectedException.none();
 
   @Test
-  public void shouldExecuteOnProject() {
-    Settings settings = mock(Settings.class);
-    RulesProfile profile = mock(RulesProfile.class);
-    ModuleFileSystem fileSystem = mock(ModuleFileSystem.class);
-    ResourcePerspectives perspectives = mock(ResourcePerspectives.class);
-
-    Project project = mock(Project.class);
-
-    ReSharperSensor sensor = new ReSharperSensor(
-      new ReSharperConfiguration("", "foo-resharper"),
-      settings, profile, fileSystem, perspectives);
-
-    when(fileSystem.files(Mockito.any(FileQuery.class))).thenReturn(ImmutableList.<File>of());
-    assertThat(sensor.shouldExecuteOnProject(project)).isFalse();
-
-    when(fileSystem.files(Mockito.any(FileQuery.class))).thenReturn(ImmutableList.of(mock(File.class)));
-    when(profile.getActiveRulesByRepository("foo-resharper")).thenReturn(ImmutableList.<ActiveRule>of());
-    assertThat(sensor.shouldExecuteOnProject(project)).isFalse();
-
-    when(fileSystem.files(Mockito.any(FileQuery.class))).thenReturn(ImmutableList.of(mock(File.class)));
-    when(profile.getActiveRulesByRepository("foo-resharper")).thenReturn(ImmutableList.of(mock(ActiveRule.class)));
-    assertThat(sensor.shouldExecuteOnProject(project)).isTrue();
+  public void describe() {
+    DefaultSensorDescriptor descriptor = new DefaultSensorDescriptor();
+    new ReSharperSensor(new ReSharperConfiguration("foo", "bar")).describe(descriptor);
+    assertThat(descriptor.name()).isEqualTo("ReSharper");
+    assertThat(descriptor.languages()).containsOnly("foo");
+    assertThat(descriptor.types()).containsOnly(InputFile.Type.MAIN);
+    assertThat(descriptor.ruleRepositories()).containsOnly("bar");
   }
 
   @Test
   public void analyze() throws Exception {
-    Settings settings = mockSettings("MyLibrary", "CSharpPlayground.sln", "inspectcode.exe");
-    RulesProfile profile = mock(RulesProfile.class);
-    ModuleFileSystem fileSystem = mock(ModuleFileSystem.class);
-    ResourcePerspectives perspectives = mock(ResourcePerspectives.class);
+    ReSharperSensor sensor = new ReSharperSensor(new ReSharperConfiguration("foo", "foo-resharper"));
 
-    ReSharperSensor sensor = new ReSharperSensor(
-      new ReSharperConfiguration("foo", "foo-resharper"),
-      settings, profile, fileSystem, perspectives);
+    ActiveRules activeRules = mockActiveRules("foo-resharper", "AccessToDisposedClosure", "AccessToForEachVariableInClosure");
 
-    List<ActiveRule> activeRules = mockActiveRules("AccessToDisposedClosure", "AccessToForEachVariableInClosure");
-    when(profile.getActiveRulesByRepository("foo-resharper")).thenReturn(activeRules);
+    File workingDir = new File("target/ReSharperSensorTest/working-dir").getAbsoluteFile();
+    DefaultFileSystem fileSystem = new DefaultFileSystem();
+    fileSystem.setWorkDir(workingDir);
 
-    SensorContext context = mock(SensorContext.class);
-    FileProvider fileProvider = mock(FileProvider.class);
-    ReSharperExecutor executor = mock(ReSharperExecutor.class);
+    InputFile inputFileClass4 = mockInputFile("foo", "Class4.cs");
+    InputFile inputFileClass5 = mockInputFile("foo", "Class5.cs");
 
-    File workingDir = new File("target/ReSharperSensorTest/working-dir");
-    when(fileSystem.workingDir()).thenReturn(workingDir);
+    fileSystem.add(inputFileClass4);
+    fileSystem.add(inputFileClass5);
+    fileSystem.add(mockInputFile("bar", "Class6.cs"));
+    fileSystem.add(mockInputFile("foo", "Class7.cs"));
 
-    File fileNotInSonarQube = mock(File.class);
-    File fooFileWithIssuable = mock(File.class);
-    File fooFileWithoutIssuable = mock(File.class);
-    File barFile = mock(File.class);
+    SensorContext context = mockSensorContext(mockSettings("MyLibrary", "CSharpPlayground.sln", "inspectcode.exe"));
+    when(context.activeRules()).thenReturn(activeRules);
+    when(context.fileSystem()).thenReturn(fileSystem);
+    // TODO Cannot do when(context.issueBuilder()).thenReturn(new DefaultIssueBuilder());
+    // will throw IllegalStateException
+    // "onFile or onProject can be called only once", because it will attempt to reuse the same builder over and over again
+    when(context.issueBuilder()).thenAnswer(new Answer<IssueBuilder>() {
 
-    when(fileProvider.fileInSolution(Mockito.any(File.class), Mockito.eq("Class3.cs"))).thenReturn(fileNotInSonarQube);
-    when(fileProvider.fileInSolution(Mockito.any(File.class), Mockito.eq("Class4.cs"))).thenReturn(fooFileWithIssuable);
-    when(fileProvider.fileInSolution(Mockito.any(File.class), Mockito.eq("Class5.cs"))).thenReturn(fooFileWithIssuable);
-    when(fileProvider.fileInSolution(Mockito.any(File.class), Mockito.eq("Class6.cs"))).thenReturn(fooFileWithoutIssuable);
-    when(fileProvider.fileInSolution(Mockito.any(File.class), Mockito.eq("Class7.cs"))).thenReturn(barFile);
+      @Override
+      public IssueBuilder answer(InvocationOnMock invocation) throws Throwable {
+        return new DefaultIssueBuilder();
+      }
 
-    org.sonar.api.resources.File fooSonarFileWithIssuable = mockSonarFile("foo");
-    org.sonar.api.resources.File fooSonarFileWithoutIssuable = mockSonarFile("foo");
-    org.sonar.api.resources.File barSonarFile = mockSonarFile("bar");
-
-    when(fileProvider.fromIOFile(fileNotInSonarQube)).thenReturn(null);
-    when(fileProvider.fromIOFile(fooFileWithIssuable)).thenReturn(fooSonarFileWithIssuable);
-    when(fileProvider.fromIOFile(fooFileWithoutIssuable)).thenReturn(fooSonarFileWithoutIssuable);
-    when(fileProvider.fromIOFile(barFile)).thenReturn(barSonarFile);
-
-    Issue issue1 = mock(Issue.class);
-    IssueBuilder issueBuilder1 = mockIssueBuilder();
-    when(issueBuilder1.build()).thenReturn(issue1);
-
-    Issue issue2 = mock(Issue.class);
-    IssueBuilder issueBuilder2 = mockIssueBuilder();
-    when(issueBuilder2.build()).thenReturn(issue2);
-
-    Issuable issuable = mock(Issuable.class);
-    when(perspectives.as(Issuable.class, fooSonarFileWithIssuable)).thenReturn(issuable);
-    when(issuable.newIssueBuilder()).thenReturn(issueBuilder1, issueBuilder2);
+    });
 
     ReSharperDotSettingsWriter writer = mock(ReSharperDotSettingsWriter.class);
 
@@ -144,23 +108,35 @@ public class ReSharperSensorTest {
         new ReSharperIssue(500, "AccessToDisposedClosure", "Class4.cs", 4, "Second message"),
         new ReSharperIssue(600, "AccessToForEachVariableInClosure", "Class5.cs", 5, "Third message"),
         new ReSharperIssue(700, "AccessToDisposedClosure", "Class6.cs", 6, "Fourth message"),
-        new ReSharperIssue(800, "AccessToDisposedClosure", "Class7.cs", 7, "Fifth message")));
+        new ReSharperIssue(800, "InactiveRule", "Class7.cs", 7, "Fifth message")));
 
-    sensor.analyse(context, fileProvider, writer, parser, executor);
+    ReSharperExecutor executor = mock(ReSharperExecutor.class);
 
-    verify(writer).write(ImmutableList.of("AccessToDisposedClosure", "AccessToForEachVariableInClosure"), new File(workingDir, "resharper-sonarqube.DotSettings"));
+    sensor.execute(context, writer, parser, executor);
+
+    verify(writer).write(
+      ImmutableList.of("AccessToDisposedClosure", "AccessToForEachVariableInClosure"),
+      new File(workingDir, "resharper-sonarqube.DotSettings"));
     verify(executor).execute(
       "inspectcode.exe", "MyLibrary", "CSharpPlayground.sln",
-      new File(workingDir, "resharper-sonarqube.DotSettings"), new File(workingDir, "resharper-report.xml"), 10);
+      new File(workingDir, "resharper-sonarqube.DotSettings"),
+      new File(workingDir, "resharper-report.xml"), 10);
 
-    verify(issuable).addIssue(issue1);
-    verify(issuable).addIssue(issue2);
+    ArgumentCaptor<Issue> issues = ArgumentCaptor.forClass(Issue.class);
 
-    verify(issueBuilder1).line(4);
-    verify(issueBuilder1).message("Second message");
+    verify(context, Mockito.times(2)).addIssue(issues.capture());
 
-    verify(issueBuilder2).line(5);
-    verify(issueBuilder2).message("Third message");
+    Issue issue1 = issues.getAllValues().get(0);
+    assertThat(issue1.ruleKey().rule()).isEqualTo("AccessToDisposedClosure");
+    assertThat(issue1.inputFile()).isSameAs(inputFileClass4);
+    assertThat(issue1.line()).isEqualTo(4);
+    assertThat(issue1.message()).isEqualTo("Second message");
+
+    Issue issue2 = issues.getAllValues().get(1);
+    assertThat(issue2.ruleKey().rule()).isEqualTo("AccessToForEachVariableInClosure");
+    assertThat(issue2.inputFile()).isSameAs(inputFileClass5);
+    assertThat(issue2.line()).isEqualTo(5);
+    assertThat(issue2.message()).isEqualTo("Third message");
   }
 
   @Test
@@ -168,8 +144,7 @@ public class ReSharperSensorTest {
     thrown.expectMessage(ReSharperPlugin.PROJECT_NAME_PROPERTY_KEY);
     thrown.expect(IllegalStateException.class);
 
-    Settings settings = mockSettings(null, "dummy.sln", null);
-    mockReSharperSensor(settings).analyse(mock(Project.class), mock(SensorContext.class));
+    new ReSharperSensor(new ReSharperConfiguration("", "")).execute(mockSensorContext(mockSettings(null, "dummy.sln", null)));
   }
 
   @Test
@@ -177,58 +152,54 @@ public class ReSharperSensorTest {
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(ReSharperPlugin.SOLUTION_FILE_PROPERTY_KEY);
 
-    Settings settings = mockSettings("Dummy Project", null, null);
-    mockReSharperSensor(settings).analyse(mock(Project.class), mock(SensorContext.class));
+    new ReSharperSensor(new ReSharperConfiguration("", "")).execute(mockSensorContext(mockSettings("Dummy Project", null, null)));
   }
 
-  private static org.sonar.api.resources.File mockSonarFile(String languageKey) {
-    Language language = mock(Language.class);
-    when(language.getKey()).thenReturn(languageKey);
-    org.sonar.api.resources.File sonarFile = mock(org.sonar.api.resources.File.class);
-    when(sonarFile.getLanguage()).thenReturn(language);
-    return sonarFile;
-  }
+  private static ActiveRules mockActiveRules(String repository, String... activeRuleKeys) {
+    ActiveRules result = mock(ActiveRules.class);
 
-  private static IssueBuilder mockIssueBuilder() {
-    IssueBuilder issueBuilder = mock(IssueBuilder.class);
-    when(issueBuilder.ruleKey(Mockito.any(RuleKey.class))).thenReturn(issueBuilder);
-    when(issueBuilder.line(Mockito.anyInt())).thenReturn(issueBuilder);
-    when(issueBuilder.message(Mockito.anyString())).thenReturn(issueBuilder);
-    return issueBuilder;
-  }
-
-  private static List<ActiveRule> mockActiveRules(String... activeRuleKeys) {
     ImmutableList.Builder<ActiveRule> builder = ImmutableList.builder();
     for (String activeRuleKey : activeRuleKeys) {
+      // TODO zzZzzZz
+      RuleKey ruleKey = mock(RuleKey.class);
+      when(ruleKey.rule()).thenReturn(activeRuleKey);
+
       ActiveRule activeRule = mock(ActiveRule.class);
-      when(activeRule.getRuleKey()).thenReturn(activeRuleKey);
+      when(activeRule.ruleKey()).thenReturn(ruleKey);
       builder.add(activeRule);
     }
-    return builder.build();
+
+    when(result.findByRepository(repository)).thenReturn(builder.build());
+
+    return result;
   }
 
-  private static ReSharperSensor mockReSharperSensor(Settings settings) {
-    ReSharperConfiguration reSharperConf = new ReSharperConfiguration("", "");
-    return new ReSharperSensor(reSharperConf, settings, mock(RulesProfile.class), mock(ModuleFileSystem.class), mock(ResourcePerspectives.class));
+  private static InputFile mockInputFile(String language, String absolutePath) {
+    // TODO This whole "relative path" thing is terribly annoying, it's used for equals() - so simply set it to the absolute path
+    return new DefaultInputFile(absolutePath).setLanguage(language).setAbsolutePath(absolutePath);
+  }
+
+  private static SensorContext mockSensorContext(Settings settings) {
+    SensorContext context = mock(SensorContext.class);
+    when(context.settings()).thenReturn(settings);
+    return context;
   }
 
   private static Settings mockSettings(@Nullable String projectName, @Nullable String solutionFile, @Nullable String inspectcodePath) {
     Settings settings = new Settings();
-    Map<String, String> props = Maps.newHashMap();
 
     if (projectName != null) {
-      props.put(ReSharperPlugin.PROJECT_NAME_PROPERTY_KEY, projectName);
+      settings.setProperty(ReSharperPlugin.PROJECT_NAME_PROPERTY_KEY, projectName);
     }
     if (solutionFile != null) {
-      props.put(ReSharperPlugin.SOLUTION_FILE_PROPERTY_KEY, solutionFile);
+      settings.setProperty(ReSharperPlugin.SOLUTION_FILE_PROPERTY_KEY, solutionFile);
     }
     if (inspectcodePath != null) {
-      props.put(ReSharperPlugin.INSPECTCODE_PATH_PROPERTY_KEY, inspectcodePath);
+      settings.setProperty(ReSharperPlugin.INSPECTCODE_PATH_PROPERTY_KEY, inspectcodePath);
     }
 
-    props.put(ReSharperPlugin.TIMEOUT_MINUTES_PROPERTY_KEY, "10");
+    settings.setProperty(ReSharperPlugin.TIMEOUT_MINUTES_PROPERTY_KEY, "10");
 
-    settings.addProperties(props);
     return settings;
   }
 

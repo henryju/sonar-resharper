@@ -20,11 +20,7 @@
 package org.sonar.plugins.resharper;
 
 import com.google.common.collect.ImmutableList;
-import org.sonar.api.component.ResourcePerspectives;
-import org.sonar.api.config.Settings;
-import org.sonar.api.profiles.RulesProfile;
 import org.sonar.api.rules.XMLRuleParser;
-import org.sonar.api.scan.filesystem.ModuleFileSystem;
 
 import java.util.List;
 
@@ -32,7 +28,7 @@ public class VBNetReSharperProvider {
 
   private static final ReSharperConfiguration RESHARPER_CONF = new ReSharperConfiguration("vbnet", "resharper-vbnet");
 
-  private VBNetReSharperProvider () {
+  private VBNetReSharperProvider() {
   }
 
   public static List extensions() {
@@ -51,8 +47,8 @@ public class VBNetReSharperProvider {
 
   public static class VBNetReSharperSensor extends ReSharperSensor {
 
-    public VBNetReSharperSensor(Settings settings, RulesProfile profile, ModuleFileSystem fileSystem, ResourcePerspectives perspectives) {
-      super(RESHARPER_CONF, settings, profile, fileSystem, perspectives);
+    public VBNetReSharperSensor() {
+      super(RESHARPER_CONF);
     }
 
   }

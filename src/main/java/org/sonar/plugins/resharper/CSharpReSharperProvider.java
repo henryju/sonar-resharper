@@ -20,11 +20,7 @@
 package org.sonar.plugins.resharper;
 
 import com.google.common.collect.ImmutableList;
-import org.sonar.api.component.ResourcePerspectives;
-import org.sonar.api.config.Settings;
-import org.sonar.api.profiles.RulesProfile;
 import org.sonar.api.rules.XMLRuleParser;
-import org.sonar.api.scan.filesystem.ModuleFileSystem;
 
 import java.util.List;
 
@@ -51,8 +47,8 @@ public class CSharpReSharperProvider {
 
   public static class CSharpReSharperSensor extends ReSharperSensor {
 
-    public CSharpReSharperSensor(Settings settings, RulesProfile profile, ModuleFileSystem fileSystem, ResourcePerspectives perspectives) {
-      super(RESHARPER_CONF, settings, profile, fileSystem, perspectives);
+    public CSharpReSharperSensor() {
+      super(RESHARPER_CONF);
     }
 
   }
