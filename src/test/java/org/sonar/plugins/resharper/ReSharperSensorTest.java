@@ -30,8 +30,8 @@ import org.mockito.stubbing.Answer;
 import org.sonar.api.batch.fs.InputFile;
 import org.sonar.api.batch.fs.internal.DefaultFileSystem;
 import org.sonar.api.batch.fs.internal.DefaultInputFile;
-import org.sonar.api.batch.rule.ActiveRule;
 import org.sonar.api.batch.rule.ActiveRules;
+import org.sonar.api.batch.rule.internal.ActiveRulesBuilder;
 import org.sonar.api.batch.sensor.SensorContext;
 import org.sonar.api.batch.sensor.internal.DefaultSensorDescriptor;
 import org.sonar.api.batch.sensor.issue.Issue;
@@ -53,11 +53,14 @@ public class ReSharperSensorTest {
 
   @Rule
   public ExpectedException thrown = ExpectedException.none();
+  private ReSharperDotSettingsWriter writer = mock(ReSharperDotSettingsWriter.class);
+  private ReSharperExecutor executor = mock(ReSharperExecutor.class);
+  private ReSharperReportParser parser = mock(ReSharperReportParser.class);
 
   @Test
   public void describe() {
     DefaultSensorDescriptor descriptor = new DefaultSensorDescriptor();
-    new ReSharperSensor(new ReSharperConfiguration("foo", "bar")).describe(descriptor);
+    new ReSharperSensor(new ReSharperConfiguration("foo", "bar"), executor, parser, writer).describe(descriptor);
     assertThat(descriptor.name()).isEqualTo("ReSharper");
     assertThat(descriptor.languages()).containsOnly("foo");
     assertThat(descriptor.types()).containsOnly(InputFile.Type.MAIN);
@@ -66,7 +69,7 @@ public class ReSharperSensorTest {
 
   @Test
   public void analyze() throws Exception {
-    ReSharperSensor sensor = new ReSharperSensor(new ReSharperConfiguration("foo", "foo-resharper"));
+    ReSharperSensor sensor = new ReSharperSensor(new ReSharperConfiguration("foo", "foo-resharper"), executor, parser, writer);
 
     ActiveRules activeRules = mockActiveRules("foo-resharper", "AccessToDisposedClosure", "AccessToForEachVariableInClosure");
 
@@ -97,9 +100,6 @@ public class ReSharperSensorTest {
 
     });
 
-    ReSharperDotSettingsWriter writer = mock(ReSharperDotSettingsWriter.class);
-
-    ReSharperReportParser parser = mock(ReSharperReportParser.class);
     when(parser.parse(new File(workingDir, "resharper-report.xml"))).thenReturn(
       ImmutableList.of(
         new ReSharperIssue(100, "AccessToDisposedClosure", null, 1, "Dummy message"),
@@ -110,9 +110,7 @@ public class ReSharperSensorTest {
         new ReSharperIssue(700, "AccessToDisposedClosure", "Class6.cs", 6, "Fourth message"),
         new ReSharperIssue(800, "InactiveRule", "Class7.cs", 7, "Fifth message")));
 
-    ReSharperExecutor executor = mock(ReSharperExecutor.class);
-
-    sensor.execute(context, writer, parser, executor);
+    sensor.execute(context);
 
     verify(writer).write(
       ImmutableList.of("AccessToDisposedClosure", "AccessToForEachVariableInClosure"),
@@ -128,13 +126,13 @@ public class ReSharperSensorTest {
 
     Issue issue1 = issues.getAllValues().get(0);
     assertThat(issue1.ruleKey().rule()).isEqualTo("AccessToDisposedClosure");
-    assertThat(issue1.inputFile()).isSameAs(inputFileClass4);
+    assertThat(issue1.inputPath()).isSameAs(inputFileClass4);
     assertThat(issue1.line()).isEqualTo(4);
     assertThat(issue1.message()).isEqualTo("Second message");
 
     Issue issue2 = issues.getAllValues().get(1);
     assertThat(issue2.ruleKey().rule()).isEqualTo("AccessToForEachVariableInClosure");
-    assertThat(issue2.inputFile()).isSameAs(inputFileClass5);
+    assertThat(issue2.inputPath()).isSameAs(inputFileClass5);
     assertThat(issue2.line()).isEqualTo(5);
     assertThat(issue2.message()).isEqualTo("Third message");
   }
@@ -144,7 +142,7 @@ public class ReSharperSensorTest {
     thrown.expectMessage(ReSharperPlugin.PROJECT_NAME_PROPERTY_KEY);
     thrown.expect(IllegalStateException.class);
 
-    new ReSharperSensor(new ReSharperConfiguration("", "")).execute(mockSensorContext(mockSettings(null, "dummy.sln", null)));
+    new ReSharperSensor(new ReSharperConfiguration("", ""), executor, parser, writer).execute(mockSensorContext(mockSettings(null, "dummy.sln", null)));
   }
 
   @Test
@@ -152,26 +150,15 @@ public class ReSharperSensorTest {
     thrown.expect(IllegalStateException.class);
     thrown.expectMessage(ReSharperPlugin.SOLUTION_FILE_PROPERTY_KEY);
 
-    new ReSharperSensor(new ReSharperConfiguration("", "")).execute(mockSensorContext(mockSettings("Dummy Project", null, null)));
+    new ReSharperSensor(new ReSharperConfiguration("", ""), executor, parser, writer).execute(mockSensorContext(mockSettings("Dummy Project", null, null)));
   }
 
   private static ActiveRules mockActiveRules(String repository, String... activeRuleKeys) {
-    ActiveRules result = mock(ActiveRules.class);
-
-    ImmutableList.Builder<ActiveRule> builder = ImmutableList.builder();
+    ActiveRulesBuilder builder = new ActiveRulesBuilder();
     for (String activeRuleKey : activeRuleKeys) {
-      // TODO zzZzzZz
-      RuleKey ruleKey = mock(RuleKey.class);
-      when(ruleKey.rule()).thenReturn(activeRuleKey);
-
-      ActiveRule activeRule = mock(ActiveRule.class);
-      when(activeRule.ruleKey()).thenReturn(ruleKey);
-      builder.add(activeRule);
+      builder.create(RuleKey.of(repository, activeRuleKey)).activate();
     }
-
-    when(result.findByRepository(repository)).thenReturn(builder.build());
-
-    return result;
+    return builder.build();
   }
 
   private static InputFile mockInputFile(String language, String absolutePath) {

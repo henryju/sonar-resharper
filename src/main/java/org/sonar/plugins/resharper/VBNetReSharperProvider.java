@@ -47,8 +47,8 @@ public class VBNetReSharperProvider {
 
   public static class VBNetReSharperSensor extends ReSharperSensor {
 
-    public VBNetReSharperSensor() {
-      super(RESHARPER_CONF);
+    public VBNetReSharperSensor(ReSharperExecutor executor, ReSharperReportParser parser, ReSharperDotSettingsWriter writer) {
+      super(RESHARPER_CONF, executor, parser, writer);
     }
 
   }

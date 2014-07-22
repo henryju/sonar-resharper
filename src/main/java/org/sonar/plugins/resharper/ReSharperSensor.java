@@ -19,7 +19,6 @@
  */
 package org.sonar.plugins.resharper;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,8 +41,15 @@ public class ReSharperSensor implements Sensor {
 
   private final ReSharperConfiguration reSharperConf;
 
-  public ReSharperSensor(ReSharperConfiguration reSharperConf) {
+  private final ReSharperExecutor executor;
+  private final ReSharperReportParser parser;
+  private final ReSharperDotSettingsWriter writer;
+
+  public ReSharperSensor(ReSharperConfiguration reSharperConf, ReSharperExecutor executor, ReSharperReportParser parser, ReSharperDotSettingsWriter writer) {
     this.reSharperConf = reSharperConf;
+    this.executor = executor;
+    this.parser = parser;
+    this.writer = writer;
   }
 
   @Override
@@ -58,11 +64,6 @@ public class ReSharperSensor implements Sensor {
 
   @Override
   public void execute(SensorContext context) {
-    execute(context, new ReSharperDotSettingsWriter(), new ReSharperReportParser(), new ReSharperExecutor());
-  }
-
-  @VisibleForTesting
-  void execute(SensorContext context, ReSharperDotSettingsWriter writer, ReSharperReportParser parser, ReSharperExecutor executor) {
     Settings settings = context.settings();
 
     checkProperties(settings);

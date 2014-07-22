@@ -19,6 +19,7 @@
  */
 package org.sonar.plugins.resharper;
 
+import org.sonar.api.BatchComponent;
 import org.sonar.api.utils.command.Command;
 import org.sonar.api.utils.command.CommandException;
 import org.sonar.api.utils.command.CommandExecutor;
@@ -26,7 +27,7 @@ import org.sonar.api.utils.command.CommandExecutor;
 import java.io.File;
 import java.util.concurrent.TimeUnit;
 
-public class ReSharperExecutor {
+public class ReSharperExecutor implements BatchComponent {
 
   private static final String EXECUTABLE = "inspectcode.exe";
 

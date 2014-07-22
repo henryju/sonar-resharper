@@ -19,6 +19,7 @@
  */
 package org.sonar.plugins.resharper;
 
+
 public class ReSharperConfiguration {
 
   private final String languageKey;

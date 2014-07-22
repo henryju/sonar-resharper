@@ -47,8 +47,8 @@ public class CSharpReSharperProvider {
 
   public static class CSharpReSharperSensor extends ReSharperSensor {
 
-    public CSharpReSharperSensor() {
-      super(RESHARPER_CONF);
+    public CSharpReSharperSensor(ReSharperExecutor executor, ReSharperReportParser parser, ReSharperDotSettingsWriter writer) {
+      super(RESHARPER_CONF, executor, parser, writer);
     }
 
   }

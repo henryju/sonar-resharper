@@ -23,12 +23,13 @@ import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
 import com.google.common.io.Files;
 import org.apache.commons.io.IOUtils;
+import org.sonar.api.BatchComponent;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
 
-public class ReSharperDotSettingsWriter {
+public class ReSharperDotSettingsWriter implements BatchComponent {
 
   public void write(List<String> ruleKeys, File file) {
     StringBuilder sb = new StringBuilder();

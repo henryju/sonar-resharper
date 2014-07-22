@@ -50,6 +50,10 @@ public class ReSharperPlugin extends SonarPlugin {
 
     builder.addAll(pluginProperties());
 
+    builder.add(ReSharperExecutor.class);
+    builder.add(ReSharperReportParser.class);
+    builder.add(ReSharperDotSettingsWriter.class);
+
     return builder.build();
   }
 

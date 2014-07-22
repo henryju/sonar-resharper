@@ -23,6 +23,7 @@ import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.Closeables;
+import org.sonar.api.BatchComponent;
 
 import javax.annotation.Nullable;
 import javax.xml.stream.XMLInputFactory;
@@ -36,7 +37,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.List;
 
-public class ReSharperReportParser {
+public class ReSharperReportParser implements BatchComponent {
 
   public List<ReSharperIssue> parse(File file) {
     return new Parser().parse(file);
